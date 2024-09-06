@@ -1,0 +1,163 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.signal import find_peaks
+
+# Step 1: Load ECG Data from Specific Sheets
+def load_ecg_data(file_name):
+    # Define the specific sheet names
+    sheet_names = ['Rest 1', 'Prepare Speech', 'Give Speech', 'Rest 2',
+                   'Mental Math', 'Rest 3', 'Bike 1', 'Bike 2']
+    
+    # Load all sheets from the Excel file
+    xl = pd.ExcelFile(file_name)
+    
+    # Create a dictionary to hold data from all tasks
+    task_data = {}
+    
+    for sheet in sheet_names:
+        if sheet in xl.sheet_names:  # Ensure the sheet exists
+            # Read each sheet (task)
+            df = xl.parse(sheet)
+            
+            # Check if 'BELT' and 'BIOPAC' columns exist
+            if 'BELT' in df.columns and 'BIOPAC' in df.columns:
+                task_data[sheet] = df[['BELT', 'BIOPAC']]  # Extract the ECG columns
+            else:
+                print(f"Error: 'BELT' or 'BIOPAC' columns not found in sheet '{sheet}'.")
+                print(f"Available columns: {df.columns.tolist()}")  # Print available columns for debugging
+                return None  # Stop execution if columns are missing
+        else:
+            print(f"Sheet '{sheet}' not found in the Excel file.")
+            return None  # Stop execution if a sheet is missing
+    
+    return task_data
+
+# Step 2: Calculate HR and Detect R-peaks from ECG Data
+def calculate_hr_and_r_peaks(ecg_signal, sampling_rate=125):
+    # Detect R-peaks in the ECG signal
+    peaks, _ = find_peaks(ecg_signal, distance=sampling_rate * 0.6)  # 0.6s min distance between peaks (typical for HR)
+    
+    # Calculate time difference between peaks (R-R intervals)
+    rr_intervals = np.diff(peaks) / sampling_rate  # In seconds
+    
+    # Convert to beats per minute (BPM)
+    heart_rate = 60 / rr_intervals if len(rr_intervals) > 0 else np.array([0])
+    
+    return np.mean(heart_rate), len(peaks), peaks  # Return mean HR, number of beats, and R-peaks
+
+# Step 3: Plot Individual Task R-peak Detection
+def plot_r_peaks(task_name, ecg_signal_belt, ecg_signal_biopac, peaks_belt, peaks_biopac):
+    plt.figure(figsize=(12, 6))
+    
+    # Plot BELT ECG
+    plt.subplot(2, 1, 1)
+    plt.plot(ecg_signal_belt, label='BELT ECG', color='blue')
+    plt.plot(peaks_belt, ecg_signal_belt[peaks_belt], "x", label='R-peaks', color='red')
+    plt.title(f'R-peaks Detection - BELT ECG - {task_name}')
+    plt.xlabel('Time (samples)')
+    plt.ylabel('Amplitude')
+    plt.legend()
+    plt.grid(True)
+
+    # Plot BIOPAC ECG
+    plt.subplot(2, 1, 2)
+    plt.plot(ecg_signal_biopac, label='BIOPAC ECG', color='green')
+    plt.plot(peaks_biopac, ecg_signal_biopac[peaks_biopac], "x", label='R-peaks', color='red')
+    plt.title(f'R-peaks Detection - BIOPAC ECG - {task_name}')
+    plt.xlabel('Time (samples)')
+    plt.ylabel('Amplitude')
+    plt.legend()
+    plt.grid(True)
+    
+    plt.tight_layout()
+    plt.show()
+
+# Step 4: Analyze HR Trends and Compare R-peaks for Each Task
+def analyze_hr_trends_and_peaks(task_data, sampling_rate=125):
+    belt_hr_trend = []
+    biopac_hr_trend = []
+    belt_beats_trend = []
+    biopac_beats_trend = []
+    tasks = []
+
+    for task, data in task_data.items():
+        belt_ecg = data['BELT']
+        biopac_ecg = data['BIOPAC']
+        
+        # Calculate HR and R-peaks for both sources
+        belt_mean_hr, belt_num_beats, belt_peaks = calculate_hr_and_r_peaks(belt_ecg, sampling_rate)
+        biopac_mean_hr, biopac_num_beats, biopac_peaks = calculate_hr_and_r_peaks(biopac_ecg, sampling_rate)
+        
+        # Append HR and beats trends
+        belt_hr_trend.append(belt_mean_hr)
+        biopac_hr_trend.append(biopac_mean_hr)
+        belt_beats_trend.append(belt_num_beats)
+        biopac_beats_trend.append(biopac_num_beats)
+        tasks.append(task)
+
+        # Plot R-peaks detection for each task
+        plot_r_peaks(task, belt_ecg, biopac_ecg, belt_peaks, biopac_peaks)
+
+    # Plot HR trends across tasks
+    plt.figure(figsize=(10, 6))
+    plt.plot(tasks, belt_hr_trend, label='BELT HR', marker='o', color='blue')
+    plt.plot(tasks, biopac_hr_trend, label='BIOPAC HR', marker='x', color='green')
+    plt.title('Heart Rate Trends Across Tasks')
+    plt.xlabel('Task')
+    plt.ylabel('Heart Rate (BPM)')
+    plt.legend()
+    plt.grid(True)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+
+    # Plot number of beats across tasks
+    plt.figure(figsize=(10, 6))
+    plt.plot(tasks, belt_beats_trend, label='BELT Beats', marker='o', color='blue')
+    plt.plot(tasks, biopac_beats_trend, label='BIOPAC Beats', marker='x', color='green')
+    plt.title('Number of Beats Detected Across Tasks')
+    plt.xlabel('Task')
+    plt.ylabel('Number of Beats')
+    plt.legend()
+    plt.grid(True)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+
+    return belt_hr_trend, biopac_hr_trend, belt_beats_trend, biopac_beats_trend
+
+# Step 5: Calculate Accuracy Between BELT and BIOPAC Beats
+def calculate_accuracy(belt_trend, biopac_trend):
+    errors = np.abs(np.array(belt_trend) - np.array(biopac_trend)) / np.array(biopac_trend)
+    accuracy = 100 - np.mean(errors) * 100  # Higher percentage means better accuracy
+    return accuracy
+
+# Step 6: Run Full Analysis
+def run_full_analysis(file_name, sampling_rate=125):
+    # Step 1: Load ECG data from specific sheets
+    task_data = load_ecg_data(file_name)
+    
+    if task_data is None:
+        print("Terminating the analysis due to missing columns or sheets.")
+        return
+    
+    # Step 2: Analyze HR trends and R-peaks
+    belt_hr_trend, biopac_hr_trend, belt_beats_trend, biopac_beats_trend = analyze_hr_trends_and_peaks(task_data, sampling_rate)
+    
+    # Step 3: Calculate HR and Beats accuracy
+    hr_accuracy = calculate_accuracy(belt_hr_trend, biopac_hr_trend)
+    beats_accuracy = calculate_accuracy(belt_beats_trend, biopac_beats_trend)
+    
+    print(f'HR Accuracy between BELT and BIOPAC: {hr_accuracy:.2f}%')
+    print(f'Beats Detection Accuracy between BELT and BIOPAC: {beats_accuracy:.2f}%')
+
+# Main execution
+if __name__ == "__main__":
+    # ADD YOUR EXCEL FILE NAME HERE. Example: 'C:/path/to/your/file.xlsx'
+    excel_file = 'P3 Data.xlsx'  # <<<<< Change this line to the path of your Excel file
+    
+    if excel_file:
+        run_full_analysis(excel_file)
+    else:
+        print("No file selected!")
